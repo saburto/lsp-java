@@ -540,6 +540,11 @@ projects import is skipped on startup."
 
 (defvar lsp-java--download-root "https://raw.githubusercontent.com/emacs-lsp/lsp-java/master/install/")
 
+(defcustom lsp-java-use-local-download-pom t
+   "Enable the usage of local pom.xml instead of downloading
+of `lsp-java--dowload-root"
+  :type 'boolean)
+
 (defun lsp-java--json-bool (param)
   "Return a PARAM for setting parsable by json.el for booleans."
   (or param :json-false))
@@ -720,7 +725,10 @@ FULL specify whether full or incremental build will be performed."
    (java:MoveDestination (:name :type :isField))
    (java:FieldCommandInfo (:initializedScopes))
    (java:MainClassInfo (:mainClass :projectName))
-   (java:RenameParams (:uri :offset :length))))
+   (java:RenameParams (:uri :offset :length))
+   (java:GotoTests (:items))
+   (java:GotoTestItem (:simpleName :uri))
+   ))
 
 (defun lsp-java--get-root ()
   "Retrieves the root directory of the java project root if available.
@@ -833,7 +841,13 @@ PARAMS progress report notification data."
                 "clean"
                 "package"
                 (format "-Djdt.download.url=%s" lsp-java-jdt-download-url))))
-    (url-copy-file (concat lsp-java--download-root "pom.xml") "pom.xml" t)
+
+    (if lsp-java-use-local-download-pom
+        (progn
+            (message "Using local pom.xml")
+            (copy-file (concat (file-name-directory (locate-library "lsp-java")) "install/pom.xml") "pom.xml"))
+      (url-copy-file (concat lsp-java--download-root "pom.xml") "pom.xml" t))
+
     (apply #'lsp-async-start-process
            callback
            error-callback
@@ -1009,6 +1023,11 @@ current symbol."
   "PARAMS is the classpath info."
   (-let (((&ExecuteCommandParams :command :arguments?) params))
     (pcase command
+      ("_java.test.askClientForChoice"
+       ;; No choice methods supported
+       (vector))
+      ("_java.test.askClientForInput"
+       (read-string (concat (aref arguments? 0) ": ") (aref arguments? 1)))
       ("java.action.organizeImports.chooseImports"
        (-let (([file-uri imports] arguments?))
          (with-current-buffer (find-file (lsp--uri-to-path file-uri))
@@ -1637,6 +1656,51 @@ With prefix 2 show both."
           t))
       (user-error "No class under point."))
     (setq lsp--buffer-workspaces workspaces)))
+
+(defun lsp-java-generate-test ()
+  (interactive)
+  (let* ((uri (lsp--path-to-uri (buffer-file-name)))
+        (response (lsp-request "workspace/executeCommand"
+                               (list :command "vscode.java.test.generateTests"
+                                     :arguments (vector uri (point))))))
+    (lsp--apply-workspace-edit response)))
+
+(defun lsp-java-go-to-test ()
+  (interactive)
+
+  (let* ((uri-request (lsp--path-to-uri (buffer-file-name)))
+         (response (lsp-request "workspace/executeCommand"
+                                (list :command "vscode.java.test.navigateToTestOrTarget"
+                                      :arguments (vector uri-request t)))))
+
+    (print response)
+    (-let* ((&java:GotoTests :items response)
+           (&java:GotoTestItem :uri (aref items 0)))
+      (print uri))
+      )
+    )
+
+
+
+;; (defun lsp-java--add-package-class-if-blank ()
+;;   (when (and (string-suffix-p ".java" (buffer-file-name))
+;;              (= (point-min) (point-max))
+;;              lsp-java--enabled-add-package)
+;;     (let ((package (mapconcat 'identity
+;;                               (split-string
+;;                                (replace-regexp-in-string
+;;                                 ".*src\\(/\\(main\\|test\\)\\)?\\(/java\\)?"
+;;                                 ""
+;;                                 default-directory)
+;;                                "/"
+;;                                t) "."))
+;;           (class-name (file-name-sans-extension (buffer-name))))
+;;       (insert (format "package %s;\n\n" package))
+;;       (insert (format "public class %s {\n\n}" class-name))))
+;;   (setq lsp-java--enabled-add-package t)
+;;   )
+
+;; (add-hook 'find-file-hook 'lsp-java--add-package-class-if-blank)
 
 (provide 'lsp-java)
 ;;; lsp-java.el ends here
