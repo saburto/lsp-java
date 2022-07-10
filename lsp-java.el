@@ -1671,12 +1671,8 @@ With prefix 2 show both."
   (let* ((uri-request (lsp--path-to-uri (buffer-file-name)))
          (response (lsp-request "workspace/executeCommand"
                                 (list :command "vscode.java.test.navigateToTestOrTarget"
-                                      :arguments (vector uri-request t)))))
-
+                                      :arguments (vector uri-request :json-false)))))
     (print response)
-    (-let* ((&java:GotoTests :items response)
-           (&java:GotoTestItem :uri (aref items 0)))
-      (print uri))
       )
     )
 

@@ -24,24 +24,26 @@
 (let ((load-prefer-newer t))
   (require 'espuds)
   (require 'ert)
+  (require 'lsp-mode)
   (require 'lsp-java))
 
 (Setup
- (unless (file-directory-p (expand-file-name "plugins" lsp-java-server-install-dir))
-   (lsp-java-update-server)))
+ (setq lsp-java-use-local-download-pom nil)
+ (lsp-install-server nil 'jdtls)
+ (sleep-for 30))
 
-(Before
- (require 'lsp-java)
- (setq lsp-java-workspace-dir (f-join lsp-java-test-root "workspace")
-       lsp-java-pop-buffer-function 'pop-to-buffer
-       lsp-print-io t
-       lsp-inhibit-message nil
-       lsp-java-workspace-cache-dir (f-join lsp-java-test-root "workspace-cache")
-       lsp-java-server-install-dir (locate-user-emacs-file "eclipse.jdt.ls/server/")
-       lsp-response-timeout 30)
- (when (file-exists-p lsp-java-test-root)
-   (delete-directory lsp-java-test-root t))
- (setq lsp--session (make-lsp-session)))
+;; (Before
+;;  (require 'lsp-java)
+;;  (setq lsp-java-workspace-dir (f-join lsp-java-test-root "workspace")
+;;        lsp-java-pop-buffer-function 'pop-to-buffer
+;;        lsp-print-io t
+;;        lsp-inhibit-message nil
+;;        lsp-java-workspace-cache-dir (f-join lsp-java-test-root "workspace-cache")
+;;        lsp-java-server-install-dir (locate-user-emacs-file "eclipse.jdt.ls/server/")
+;;        lsp-response-timeout 30)
+;;  (when (file-exists-p lsp-java-test-root)
+;;    (delete-directory lsp-java-test-root t))
+;;  (setq lsp--session (make-lsp-session)))
 
 (After
  (mapc 'kill-buffer
