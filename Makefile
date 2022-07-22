@@ -20,6 +20,6 @@ clean:
 
 test:
 	$(EASK) install-deps --dev
-	$(EASK) buttercup tests
+	$(EASK) test buttercup
 
 .PHONY: build test compile checkdoc lint
