@@ -40,4 +40,4 @@ jobs:
         version: 'snapshot'
 
     - name: Run tests
-      run: 'make ci'
+      run: 'eask buttercup tests'
