@@ -1027,7 +1027,8 @@ current symbol."
        ;; No choice methods supported
        (vector))
       ("_java.test.askClientForInput"
-       (read-string (concat (aref arguments? 0) ": ") (aref arguments? 1)))
+       ;; (read-string (concat (aref arguments? 0) ": ") (aref arguments? 1))
+       (aref arguments? 1))
       ("java.action.organizeImports.chooseImports"
        (-let (([file-uri imports] arguments?))
          (with-current-buffer (find-file (lsp--uri-to-path file-uri))
@@ -1663,15 +1664,21 @@ With prefix 2 show both."
         (response (lsp-request "workspace/executeCommand"
                                (list :command "vscode.java.test.generateTests"
                                      :arguments (vector uri (point))))))
-    (lsp--apply-workspace-edit response)))
+    (lsp--apply-workspace-edit response)
+    (let* ((document (aref (ht-get response "documentChanges") 0))
+           (uri (or (ht-get document "uri")
+                    (ht-get* document "textDocument" "uri"))))
+      (if uri (lsp--uri-to-path uri)
+        (user-error "Unexpected error generating the test")))))
 
 (defun lsp-java-go-to-test ()
   (interactive)
 
   (let* ((uri-request (lsp--path-to-uri (buffer-file-name)))
+          (is-test (string-match-p (regexp-quote "Test?") (buffer-file-name)))
          (response (lsp-request "workspace/executeCommand"
                                 (list :command "vscode.java.test.navigateToTestOrTarget"
-                                      :arguments (vector uri-request :json-false)))))
+                                      :arguments (vector uri-request t)))))
     (print response)
       )
     )

@@ -1,3 +1,4 @@
+(require 'lsp-java)
 (require 'lsp-mode)
 (require 'lsp-protocol)
 (require 'edmacro)
@@ -10,6 +11,8 @@
 
 (setq lsp-enable-snippet nil)
 
+(global-auto-revert-mode t)
+
 (defun lsp--java-wait-for (what pred)
   (while (not (funcall pred))
     (print (concat "waiting for ..." what))
@@ -21,28 +24,32 @@
     (setq simple-java-folder (concat default-directory "tests/resources/simple-java"))
     (cd simple-java-folder)
     (find-file "src/main/java/simple/java/App.java")
-
+    (lsp-workspace-folders-add simple-java-folder)
     (if (f-exists? (expand-file-name
                     (locate-user-emacs-file (f-join ".cache" "lsp" "eclipse.jdt.ls"))))
         (print "Already installed")
       (progn
         (lsp-install-server nil 'jdtls)
         (lsp--java-wait-for "download server"
-                            (lambda () (not (-some--> #'lsp--client-download-in-progress? (lsp--filter-clients it))))))))
+                            (lambda () (not (-some--> #'lsp--client-download-in-progress? (lsp--filter-clients it)))))))
+    (lsp-toggle-trace-io))
 
   (before-each
-   (revert-buffer nil t)
+   ;; (delete-file "src/test/java/simple/java/AppTest.java")
+   ;; (find-file "src/main/java/simple/java/App.java")
+   ;; (revert-buffer nil t)
    (lsp)
    (lsp--java-wait-for "server ready"
                        (lambda () (--some? (eq (lsp--workspace-status it) 'initialized)
-                                           (lsp--session-workspaces (lsp-session))))))
+                                           (lsp--session-workspaces (lsp-session)))))
+   )
 
-  (it "add a invalid statement"
+  (xit "add a invalid statement"
       (insert "new ArrayList()" )
       (sleep-for 4)
       (expect (length (lsp-cur-line-diagnostics)) :to-equal 1))
 
-  (it "add a invalid import"
+  (xit "add a invalid import"
       (forward-line)
       (insert "import ok.ok.not.found;")
       (sleep-for 4)
@@ -56,12 +63,13 @@
       (expect (length (lsp-cur-line-diagnostics)) :to-equal 1))
 
   (describe "using tests"
-            (xit "create a test from current file"
+            (it "create a test from current file"
 
-                (lsp-java-generate-test)
-
-                (sleep-for 4)
-                (print (buffer-file-name)))))
+                (spy-on 'yes-or-no-p :and-return-value t)
+                (let ((new-file (lsp-java-generate-test)))
+                  (find-file new-file)
+                  (expect (buffer-file-name) :to-match ".*/src/test/java/simple/java/AppTest.java$")
+                  (print (buffer-string))))))
 
 
 

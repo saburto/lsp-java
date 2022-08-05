@@ -4,23 +4,23 @@
 
 ;; XXX: Linter will report errors because of the package main file; let's
 ;; disable this for now!
-;;(package-file "lsp-java.el")
 
 (files "*.el"
-       "install/*")
+       "install/**")
 
 (source "gnu")
 (source "melpa")
 
-(depends-on "emacs" "26.1")
-(depends-on "lsp-mode")
-(depends-on "markdown-mode")
-(depends-on "dash")
-(depends-on "f")
-(depends-on "ht")
-(depends-on "request")
-(depends-on "treemacs")
-(depends-on "dap-mode")
+(depends-on "emacs" "27.1")
+(depends-on 'lsp-mode)
+(depends-on 'markdown-mode)
+(depends-on 'treemacs)
+(depends-on 'dap-mode)
+(depends-on 'dash)
+(depends-on 'ht)
+(depends-on 'f)
+(depends-on 'request)
+
 
 (development
  (depends-on "company")
