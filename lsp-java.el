@@ -47,7 +47,7 @@ The slash is expected at the end."
   :risky t
   :type 'directory)
 
-(defcustom lsp-java-jdt-download-url "https://download.eclipse.org/jdtls/milestones/1.12.0/jdt-language-server-1.12.0-202206011637.tar.gz"
+(defcustom lsp-java-jdt-download-url "https://download.eclipse.org/jdtls/milestones/1.14.0/jdt-language-server-1.14.0-202207211651.tar.gz"
   "JDT JS download url.
 Use http://download.eclipse.org/che/che-ls-jdt/snapshots/che-jdt-language-server-latest.tar.gz if you want to use Eclipse Che JDT LS."
   :group 'lsp-java
@@ -1658,12 +1658,29 @@ With prefix 2 show both."
       (user-error "No class under point."))
     (setq lsp--buffer-workspaces workspaces)))
 
+(setq lsp-java--tests-paths nil)
+
+(defun lsp-java-test-get-source-path ()
+  (or lsp-java--tests-paths
+      (let* ((uri (lsp--path-to-uri (lsp-java--get-root)))
+             (response (lsp-request "workspace/executeCommand"
+                                    (list :command "vscode.java.test.get.testpath"
+                                          :arguments (vector (vector uri)))))
+             (response (or response (user-error "No test source path found")))
+             (only-paths (--map (ht-get it "testSourcePath") response)))
+        (setq lsp-java--tests-paths only-paths)
+        only-paths)))
+
+(defun lsp-java--test-is-a-test ()
+  (--any (string-match (regexp-quote it) (buffer-file-name)) (lsp-java-test-get-source-path)))
+
 (defun lsp-java-generate-test ()
   (interactive)
   (let* ((uri (lsp--path-to-uri (buffer-file-name)))
         (response (lsp-request "workspace/executeCommand"
                                (list :command "vscode.java.test.generateTests"
                                      :arguments (vector uri (point))))))
+                                     ;; :arguments (vector (lsp--buffer-uri) (point))))))
     (lsp--apply-workspace-edit response)
     (let* ((document (aref (ht-get response "documentChanges") 0))
            (uri (or (ht-get document "uri")
@@ -1675,35 +1692,18 @@ With prefix 2 show both."
   (interactive)
 
   (let* ((uri-request (lsp--path-to-uri (buffer-file-name)))
-          (is-test (string-match-p (regexp-quote "Test?") (buffer-file-name)))
+         (is-test (if (lsp-java--test-is-a-test) :json-false t))
          (response (lsp-request "workspace/executeCommand"
                                 (list :command "vscode.java.test.navigateToTestOrTarget"
-                                      :arguments (vector uri-request t)))))
-    (print response)
-      )
-    )
+                                      :arguments (vector uri-request is-test)))))
+    (if-let* ((items (ht-get response "items"))
+              (has-context (> (length items) 0)))
+        (let* ((firstUri (aref items 0))
+               (uri-target (ht-get firstUri "uri"))
+               (target-file (lsp--uri-to-path uri-target)))
+          (find-file target-file))
+      (find-file (lsp-java-generate-test)))))
 
-
-
-;; (defun lsp-java--add-package-class-if-blank ()
-;;   (when (and (string-suffix-p ".java" (buffer-file-name))
-;;              (= (point-min) (point-max))
-;;              lsp-java--enabled-add-package)
-;;     (let ((package (mapconcat 'identity
-;;                               (split-string
-;;                                (replace-regexp-in-string
-;;                                 ".*src\\(/\\(main\\|test\\)\\)?\\(/java\\)?"
-;;                                 ""
-;;                                 default-directory)
-;;                                "/"
-;;                                t) "."))
-;;           (class-name (file-name-sans-extension (buffer-name))))
-;;       (insert (format "package %s;\n\n" package))
-;;       (insert (format "public class %s {\n\n}" class-name))))
-;;   (setq lsp-java--enabled-add-package t)
-;;   )
-
-;; (add-hook 'find-file-hook 'lsp-java--add-package-class-if-blank)
 
 (provide 'lsp-java)
 ;;; lsp-java.el ends here
