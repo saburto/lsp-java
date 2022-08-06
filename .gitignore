@@ -3,3 +3,4 @@
 *.elc
 tmp/
 /install/.mvn/wrapper/maven-wrapper.jar
+/tests/resources/simple-java/src/test/java/simple/java/AppTest.java
