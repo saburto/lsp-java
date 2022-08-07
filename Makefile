@@ -19,6 +19,7 @@ clean:
 	$(EASK) clean-all
 
 test:
+	$(EASK) clean-all
 	$(EASK) install-deps --dev
 	$(EASK) test buttercup
 
