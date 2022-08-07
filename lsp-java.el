@@ -684,7 +684,6 @@ FULL specify whether full or incremental build will be performed."
         (server-config (lsp-file-local-name (lsp-java--locate-server-config)))
         (java-9-args (when (lsp-java--java-9-plus-p)
                        lsp-java-9-args)))
-    (lsp-java--ensure-dir lsp-java-workspace-dir)
     `(,lsp-java-java-path
       "-Declipse.application=org.eclipse.jdt.ls.core.id1"
       "-Dosgi.bundles.defaultStartLevel=4"
@@ -1676,11 +1675,11 @@ With prefix 2 show both."
 
 (defun lsp-java-generate-test ()
   (interactive)
+
   (let* ((uri (lsp--path-to-uri (buffer-file-name)))
         (response (lsp-request "workspace/executeCommand"
                                (list :command "vscode.java.test.generateTests"
                                      :arguments (vector uri (point))))))
-                                     ;; :arguments (vector (lsp--buffer-uri) (point))))))
     (lsp--apply-workspace-edit response)
     (let* ((document (aref (ht-get response "documentChanges") 0))
            (uri (or (ht-get document "uri")
@@ -1702,7 +1701,8 @@ With prefix 2 show both."
                (uri-target (ht-get firstUri "uri"))
                (target-file (lsp--uri-to-path uri-target)))
           (find-file target-file))
-      (find-file (lsp-java-generate-test)))))
+      (progn
+        (find-file (lsp-java-generate-test))))))
 
 
 (provide 'lsp-java)
