@@ -5,7 +5,7 @@ build:
 	$(EASK) package
 	$(EASK) install
 
-ci: build compile test checkdoc lint
+ci: test checkdoc lint compile build
 
 compile:
 	@echo "Compiling..."
@@ -19,7 +19,6 @@ clean:
 	$(EASK) clean-all
 
 test:
-	$(EASK) clean-all
 	$(EASK) install-deps --dev
 	$(EASK) test buttercup
 
