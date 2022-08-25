@@ -18,6 +18,7 @@
 (depends-on 'dap-mode)
 (depends-on 'dash)
 (depends-on 'ht)
+(depends-on 'maven-test-mode)
 (depends-on 'f)
 (depends-on 'request)
 

@@ -2,7 +2,7 @@
 
 ;; Version: 3.0
 
-;; Package-Requires: ((emacs "27.1") (lsp-mode "6.0") (markdown-mode "2.3") (dash "2.18.0") (f "0.20.0") (ht "2.0") (request "0.3.0") (treemacs "2.5") (dap-mode "0.5"))
+;; Package-Requires: ((emacs "27.1") (lsp-mode "6.0") (markdown-mode "2.3") (dash "2.18.0") (f "0.20.0") (ht "2.0") (request "0.3.0") (treemacs "2.5") (dap-mode "0.5") (maven-test-mode "0.1.5"))
 ;; Keywords: languague, tools
 ;; URL: https://github.com/emacs-lsp/lsp-java
 
@@ -33,6 +33,7 @@
 (require 'f)
 (require 'request)
 (require 'cl-lib)
+(require 'maven-test-mode)
 
 (defgroup lsp-java nil
   "JDT emacs frontend."
@@ -1093,12 +1094,14 @@ current symbol."
 
 (defvar lsp-java--helm-result nil)
 
+
 (defun lsp-java--completing-read-multiple (message items initial-selection)
   (if (functionp 'helm)
       (progn
         (require 'helm-source)
         (helm :sources (helm-make-source
                            message 'helm-source-sync :candidates items
+                           :fuzzy-match t
                            :action '(("Identity" lambda (_)
                                       (setq lsp-java--helm-result (helm-marked-candidates)))))
               :buffer "*lsp-java select*"
@@ -1669,6 +1672,8 @@ With prefix 2 show both."
 
 (setq lsp-java--tests-paths nil)
 
+
+
 (defun lsp-java-test-get-source-path ()
   (or lsp-java--tests-paths
       (let* ((uri (lsp--path-to-uri (lsp-java--get-root)))
@@ -1676,12 +1681,13 @@ With prefix 2 show both."
                                     (list :command "vscode.java.test.get.testpath"
                                           :arguments (vector (vector uri)))))
              (response (or response (user-error "No test source path found")))
-             (only-paths (--map (ht-get it "testSourcePath") response)))
+             (only-paths (--map (lsp-get it :testSourcePath) response)))
         (setq lsp-java--tests-paths only-paths)
         only-paths)))
 
 (defun lsp-java--test-is-a-test ()
-  (--any (string-match (regexp-quote it) (buffer-file-name)) (lsp-java-test-get-source-path)))
+  (--any (string-match (regexp-quote it) (buffer-file-name))
+         (lsp-java-test-get-source-path)))
 
 (defun lsp-java-generate-test ()
   (interactive)
@@ -1691,28 +1697,41 @@ With prefix 2 show both."
                                (list :command "vscode.java.test.generateTests"
                                      :arguments (vector uri (point))))))
     (lsp--apply-workspace-edit response)
-    (let* ((document (aref (ht-get response "documentChanges") 0))
-           (uri (or (ht-get document "uri")
-                    (ht-get* document "textDocument" "uri"))))
+    (let* ((document (aref (lsp-get response :documentChanges) 0))
+           (uri (or (lsp-get document :uri)
+                    (lsp-get (lsp-get document :textDocument) :uri))))
       (if uri (lsp--uri-to-path uri)
         (user-error "Unexpected error generating the test")))))
 
+(defun lsp-java-find-java-projects ()
+  (interactive)
+  (let* ((response (lsp-request "workspace/executeCommand"
+                                 (list :command "vscode.java.test.findJavaProjects"
+                                       :arguments (vector (lsp--path-to-uri (lsp-java--get-root)))
+                                       )))
+         (list-classes (lsp-request "workspace/executeCommand"
+                                    (list :command "vscode.java.test.findTestPackagesAndTypes"
+                                          :arguments (vector (-> response
+                                                                 (-first-item)
+                                                                 (lsp-get :jdtHandler))))))
+         (list-items (->> list-classes (--map (lsp-get it :children))
+                          (--reduce (vconcat acc it))
+                          (--map (cons (lsp-get it :label) it))))
+         (selected-test-class (lsp-java--completing-read-multiple "select classs" list-items (-map #'cl-rest list-items) ))
+
+         )
+    selected-test-class
+
+    ))
+
 (defun lsp-java-go-to-test ()
   (interactive)
-
-  (let* ((uri-request (lsp--path-to-uri (buffer-file-name)))
-         (is-test (if (lsp-java--test-is-a-test) :json-false t))
-         (response (lsp-request "workspace/executeCommand"
-                                (list :command "vscode.java.test.navigateToTestOrTarget"
-                                      :arguments (vector uri-request is-test)))))
-    (if-let* ((items (ht-get response "items"))
-              (has-context (> (length items) 0)))
-        (let* ((firstUri (aref items 0))
-               (uri-target (ht-get firstUri "uri"))
-               (target-file (lsp--uri-to-path uri-target)))
-          (find-file target-file))
-      (progn
-        (find-file (lsp-java-generate-test))))))
+  (let ((target (maven-test-toggle-get-target-filename)))
+    (if (f-exists? target)
+        (find-file target)
+      (if (not (maven-test-is-test-file-p))
+          (find-file (lsp-java-generate-test))
+        (user-error (format "No class found: %s" target))))))
 
 
 (provide 'lsp-java)

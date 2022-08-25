@@ -8,7 +8,7 @@
 (require 'flycheck)
 
 ;; enable for req/response communication with the server
-(setq lsp-log-io nil)
+(setq lsp-log-io t)
 
 (setq buttercup-stack-frame-style 'pretty)
 
@@ -82,27 +82,40 @@
    (spy-on 'lsp--make-log-entry :and-call-fake 'print-body)
    (spy-on 'lsp-request :and-call-through))
 
-  (it "add a invalid statement"
+  (xit "add a invalid statement"
       (insert "new ArrayList()" )
       (expect-error-on-current-line "Syntax error"))
 
-  (it "add a invalid import"
+  (it "ok"
+      (spy-on 'yes-or-no-p :and-return-value t)
+      (lsp-java-go-to-test)
+      (forward-line)
+      (insert "import org.junit.jupiter.api.Test;")
+      (end-of-buffer)
+      (forward-line -1)
+      (insert "@Test void this_is_a_test_number_2() { //nothing }")
+      (save-buffer)
+      (lsp)
+      (sleep-for 10)
+      (print (lsp-java-find-java-projects)))
+
+  (xit "add a invalid import"
       (forward-line)
       (insert "import ok.ok.not.found;")
       (expect-error-on-current-line "import.*cannot to be resolved"))
 
   (describe "using tests"
-    (it "fetch source paths only once"
+    (xit "fetch source paths only once"
         (let ((sources (lsp-java-test-get-source-path)))
           (expect (length sources) :to-equal 2)
           (let ((sources-second-time (lsp-java-test-get-source-path)))
             (expect sources :to-equal sources-second-time)))
         (expect (spy-calls-count 'lsp-request) :to-equal 1))
 
-    (it "check if a filename is not a test"
+    (xit "check if a filename is not a test"
         (expect (lsp-java--test-is-a-test ) :not :to-be-truthy))
 
-    (it "go to test even and create when does not exist"
+    (xit "go to test even and create when does not exist"
         (spy-on 'yes-or-no-p :and-return-value t)
 
         (lsp-java-go-to-test)
@@ -114,7 +127,7 @@
         (save-current-buffer)
         )
 
-    (it "go to implementation and go back to test"
+    (xit "go to implementation and go back to test"
         (spy-on 'yes-or-no-p :and-return-value t)
 
         (find-file test-app-class)
