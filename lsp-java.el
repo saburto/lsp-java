@@ -1673,7 +1673,6 @@ With prefix 2 show both."
 (setq lsp-java--tests-paths nil)
 
 
-
 (defun lsp-java-test-get-source-path ()
   (or lsp-java--tests-paths
       (let* ((uri (lsp--path-to-uri (lsp-java--get-root)))
@@ -1702,27 +1701,6 @@ With prefix 2 show both."
                     (lsp-get (lsp-get document :textDocument) :uri))))
       (if uri (lsp--uri-to-path uri)
         (user-error "Unexpected error generating the test")))))
-
-(defun lsp-java-find-java-projects ()
-  (interactive)
-  (let* ((response (lsp-request "workspace/executeCommand"
-                                 (list :command "vscode.java.test.findJavaProjects"
-                                       :arguments (vector (lsp--path-to-uri (lsp-java--get-root)))
-                                       )))
-         (list-classes (lsp-request "workspace/executeCommand"
-                                    (list :command "vscode.java.test.findTestPackagesAndTypes"
-                                          :arguments (vector (-> response
-                                                                 (-first-item)
-                                                                 (lsp-get :jdtHandler))))))
-         (list-items (->> list-classes (--map (lsp-get it :children))
-                          (--reduce (vconcat acc it))
-                          (--map (cons (lsp-get it :label) it))))
-         (selected-test-class (lsp-java--completing-read-multiple "select classs" list-items (-map #'cl-rest list-items) ))
-
-         )
-    selected-test-class
-
-    ))
 
 (defun lsp-java-go-to-test ()
   (interactive)

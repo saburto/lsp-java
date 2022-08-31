@@ -40,10 +40,12 @@
 (defvar lsp-jt--refresh-timer nil)
 
 (defconst lsp-jt-kind-root 0)
-(defconst lsp-jt-kind-folder 1)
-(defconst lsp-jt-kind-package 2)
-(defconst lsp-jt-kind-class 3)
-(defconst lsp-jt-kind-method 4)
+(defconst lsp-jt-kind-workspace 1)
+(defconst lsp-jt-kind-workspace-folder 2)
+(defconst lsp-jt-kind-project 3)
+(defconst lsp-jt-kind-package 4)
+(defconst lsp-jt-kind-class 5)
+(defconst lsp-jt-kind-method 6)
 
 (defvar lsp-jt-results (ht))
 
@@ -74,8 +76,8 @@
 
 (eval-and-compile
   (lsp-interface
-   (jt:TestItem (:id :displayName :fullName :children :level :kind :project :location))
-   (jt:Argument (:uri :classFullName :testName :project :scope :testKind :start :end))
+   (jt:TestItem (:id :label :fullName :children :testLevel :testKind :projectName :uri :range :jdtHandler))
+   (jt:Argument (:projectName :testNames :testLevel :testKind :uniqueId))
    (jt:JUnitLaunchArguments (:workingDirectory :mainClass :projectName :classpath :modulepath :vmArguments :programArguments))))
 
 (defconst lsp-jt-test-kind-none -1)
@@ -110,103 +112,72 @@
 
 (defvar-local lsp-jt--last-callback nil)
 
-(lsp-defun lsp-jt--start-test ((node &as &jt:TestItem :location (&Location :uri)
-                                     :full-name :level)
-                               no-debug?)
+(lsp-defun lsp-jt--junit-arguments ((node &as &jt:TestItem :id :uri :project-name :full-name :test-level :test-kind
+                                          :jdt-handler))
+  (lsp--send-execute-command
+   "vscode.java.test.junit.argument"
+   (vector
+    (lsp--json-serialize
+     (lsp-make-jt-argument
+      :uniqueId ""
+      :testLevel test-level
+      :testNames (vector (if (eq test-level lsp-jt-kind-method) jdt-handler id))
+      :test-kind (or test-kind lsp-jt-test-kind-junit)
+      :projectName project-name)))))
+
+(lsp-defun lsp-jt--find-test-method ((&jt:TestItem :test-level))
+  (= test-level lsp-jt-kind-method))
+
+
+(defun lsp-jt-run-method-at-point ()
+  (interactive)
+  (let* ((methods (lsp--send-execute-command
+                  "vscode.java.test.findTestTypesAndMethods"
+                  (vector (lsp--path-to-uri (buffer-file-name)))))
+        (symbols-at-the-point (lsp--document-symbols->document-symbols-hierarchy methods (lsp--cur-position)))
+        (test-method (or
+                      (-first #'lsp-jt--find-test-method symbols-at-the-point)
+                      (user-error "No test method found at the point"))))
+    (lsp-jt--start-test test-method t)))
+
+
+(defun lsp-jt-run-class ()
+  (interactive)
+  (lsp-jt--start-test
+   (lsp-seq-first
+    (lsp--send-execute-command
+     "vscode.java.test.findTestTypesAndMethods"
+     (vector (lsp--path-to-uri (buffer-file-name))))) t))
+
+
+(lsp-defun lsp-jt--start-test ((node &as &jt:TestItem :id :test-kind :test-level :project-name) no-debug?)
+
+  (when (= test-kind lsp-jt-test-kind-testng) (user-error "TestNG is not implemented!"))
+
   (lsp-java-with-jdtls
-    (-let* ((full-name (if (>= level lsp-jt-kind-package) full-name ""))
-            (tests (cond
-                    ((= level lsp-jt-kind-method) `((,node)))
-                    (t (->>
-                        (or (lsp--send-execute-command
-                             "vscode.java.test.search.items.all"
-                             (vector
-                              (lsp--json-serialize
-                               (list :uri uri :level level :fullName full-name))))
-                            (user-error "Unable to find tests under %s." node))
-                        ;; unique tests
-                        (-reduce-from (-lambda ((result covered-set)
-                                                (item &as &jt:TestItem :id :children))
-                                        (list (if (-contains? result id)
-                                                  result
-                                                (cons item result))
-                                              (append  children covered-set (list id))))
-                                      nil)
-                        (cl-first)
-                        ;; group by kind/executor
-                        (-group-by (-lambda ((&jt:TestItem :kind :project)) (cons project kind)))
-                        (-map #'cl-rest)))))
-            launch-configs launch-config)
+    (let* (
+           (arguments (lsp-jt--junit-arguments node))
+           (analyzer (lsp-jt--create-analyzer project-name lsp-jt-results))
+           (launch-config (lsp-jt--create-launch-config arguments no-debug? analyzer
+                           (lambda ()
+                             ;; mark all pending/running in undefined status
+                             (let (needs-update)
+                               (mapc (-lambda ((test-result &as &plist :status))
+                                       (when (or (eq status :running)
+                                                 (eq status :pending))
+                                         (plist-put test-result :status nil)
+                                         (setq needs-update t)))
+                                     (ht-values lsp-jt-results))
+                               (when needs-update (run-hooks 'lsp-jt-status-updated-hook)))
+                             (run-hooks 'lsp-jt-test-run-finished-hook)))))
 
-      ;; we should start each group and then start the next one when the previous
-      ;; one has finished.
-      (-setq (launch-config . launch-configs)
-        (-map
-         (lambda (test-group)
-           (let ((kind (or (lsp:jt-test-item-kind (cl-first test-group)) lsp-jt-test-kind-junit))
-                 (project (lsp:jt-test-item-project (cl-first test-group))))
-             (cons
-              test-group
-              (cond
-               ((= kind lsp-jt-test-kind-testng) (user-error "TestNG is not implemented!"))
-               (t (lsp-jt--create-launch-config
-                   (lsp--send-execute-command
-                    "vscode.java.test.junit.argument"
-                    (vector
-                     (lsp--json-serialize
-                      (lsp-make-jt-argument
-                       :class-full-name (when full-name
-                                          (if (s-contains? "#" full-name)
-                                              (cl-first (s-split "#" full-name ))
-                                            full-name))
-                       :scope level
-                       :testName (or (when (and full-name (s-contains? "#" full-name))
-                                       (cl-second (s-split "#" full-name )))
-                                     "")
-                       :test-kind (or kind lsp-jt-test-kind-junit)
-                       :project project
-                       :uri uri
-                       :start (when (and (eq kind lsp-jt-test-kind-junit5)
-                                         (eq level lsp-jt-kind-method))
-                                (->> test-group cl-first lsp:jt-test-item-location lsp:location-range lsp:range-start))
-                       :end (when (and (eq kind lsp-jt-test-kind-junit5)
-                                       (eq level lsp-jt-kind-method))
-                              (->> test-group cl-first lsp:jt-test-item-location lsp:location-range lsp:range-end))))))
-                   no-debug?
-                   (lsp-jt--create-analyzer project lsp-jt-results)
-                   (lambda ()
-                     ;; mark all pending/running in undefined status
-                     (let (needs-update)
-                       (mapc (-lambda ((test-result &as &plist :status))
-                               (when (or (eq status :running)
-                                         (eq status :pending))
-                                 (plist-put test-result :status nil)
-                                 (setq needs-update t)))
-                             (ht-values lsp-jt-results))
-                       (when needs-update (run-hooks 'lsp-jt-status-updated-hook)))
+      (when (eq test-level lsp-jt-kind-method)
+        (puthash id (list :status :pending) lsp-jt-results))
 
-                     (-setq (launch-config . launch-configs) launch-configs)
-                     ;; start next group if present
-                     (when launch-config
-                       (lsp-jt--start-group launch-config))
-                     (run-hooks 'lsp-jt-test-run-finished-hook))))))))
-         tests))
+      (dap-debug launch-config)
+      (run-hooks 'lsp-jt-status-updated-hook))))
 
-      ;; start the first group
-      (ht-clear lsp-jt-results)
-      (lsp-jt--start-group launch-config))))
 
-(lsp-defun lsp-jt--start-group ((test-group . launch-config))
-  (mapc (-lambda ((&jt:TestItem :id :level :children))
-          (when (equal level lsp-jt-kind-method)
-            (puthash id (list :status :pending)
-                     lsp-jt-results))
-          (mapc (lambda (id)
-                  (puthash id (list :status :pending) lsp-jt-results))
-                children))
-        test-group)
-  (dap-debug launch-config)
-  (run-hooks 'lsp-jt-status-updated-hook))
 
 (defun lsp-jt-lens-backend (_modified? callback)
   (setq-local lsp-jt--last-callback callback)
@@ -279,13 +250,24 @@
 
 (defun lsp-jt-search (root level full-name callback)
   (lsp-java-with-jdtls
+    (let* ((response (lsp-request "workspace/executeCommand"
+                                  (list :command "vscode.java.test.findJavaProjects"
+                                        :arguments (vector root))))
+           (jdt-handler-id (-> response
+                               (-first-item)
+                               (lsp-get :jdtHandler))))
+      (lsp-request-async
+       "workspace/executeCommand"
+       (list :command "vscode.java.test.findTestPackagesAndTypes"
+             :arguments (vector jdt-handler-id))
+       callback))))
+
+(defun lsp-jt-search-methods (jdt-handler-id callback)
+  (lsp-java-with-jdtls
     (lsp-request-async
      "workspace/executeCommand"
-     (list :command "vscode.java.test.search.items"
-           :arguments
-           (vector (lsp--json-serialize `(:uri ,root
-                                               :level ,level
-                                               ,@(when full-name (list :fullName full-name))))))
+     (list :command "vscode.java.test.findDirectTestChildrenForClass"
+           :arguments (vector jdt-handler-id))
      callback)))
 
 (defun lsp-jt-goto (&rest _)
@@ -396,25 +378,23 @@
                    (delete-process tcp-server-process))
                  (funcall finished-function))))))))
 
-(lsp-defun lsp-jt--render-test-node ((test-item &as &jt:TestItem :display-name :level :id
-                                                :location (loc &as &Location :uri) :full-name))
+(lsp-defun lsp-jt--render-test-node ((test-item &as &jt:TestItem :id :label :test-level :id :jdt-handler :uri :range :children))
   `(:key ,id
-    :label ,display-name
-    :icon ,(lsp-jt--get-test-icon id level)
-    ,@(unless (eq level 4)
+    :label ,label
+    :icon ,(lsp-jt--get-test-icon id test-level)
+    ,@(when (eq test-level 5)
         (list :children-async (lambda (_ callback)
-                                (lsp-jt-search
-                                 uri
-                                 level
-                                 full-name
+                                (lsp-jt-search-methods
+                                 jdt-handler
                                  (lambda (items)
                                    (funcall callback
                                             (-map
                                              #'lsp-jt--render-test-node
                                              items)))))))
+    :children ,(-map #'lsp-jt--render-test-node children)
     :ret-action ,(lambda ()
                    (interactive)
-                   (lsp-goto-location loc))
+                   (lsp-goto-location (ht->plist (ht (:uri uri) (:range range)))))
     :actions (["Run Test"   lsp-jt-run]
               ["Debug Test" lsp-jt-debug]
               ["Refresh"    lsp-jt-browser-refresh])
@@ -581,10 +561,73 @@
     (:pass 'java-test-pass)
     (:failed 'java-test-error)
     (:pending 'java-test-pending)
-    (t (alist-get level '((1 . java-test-package)
-                          (2 . java-test-package)
-                          (3 . java-test-class)
-                          (4 . java-test-method))))))
+    (t (alist-get level '((lsp-jt-kind-root . java-test-package)
+                          (lsp-jt-kind-workspace . java-test-package)
+                          (lsp-jt-kind-workspace-folder . java-test-package)
+                          (lsp-jt-kind-project . java-test-package)
+                          (lsp-jt-kind-package . java-test-package)
+                          (lsp-jt-kind-class . java-test-class)
+                          (lsp-jt-kind-method . java-test-method))))))
+
+(define-derived-mode lsp-jt-test-result-tab-mode tabulated-list-mode "lsp-jt-test-result-tab-mode"
+  "Major mode for tabulated list example."
+  (setq tabulated-list-format [("Time" 10 t)
+                               ("Status" 10 t)
+                               ("Duration (seconds)"  10 t)
+                               ("Name" 30 t)
+                               ("Class"  50 t)
+                               ("Stack-Trace" 0 nil)])
+  (setq tabulated-list-padding 4)
+  (setq tabulated-list-sort-key (cons "Time" nil)))
+
+
+(defun lsp-jt--open-stack-trace (button)
+  (with-help-window "**Stack Trace**"
+    (princ
+     (button-get button 'long-trace))))
+
+(defun lsp-jt--create-stack-trace-button (stack-trace)
+  `(,(concat (substring stack-trace 0 30) "...")
+   face link
+   help-echo "View stack-trace"
+   follow-link t
+   long-trace ,stack-trace
+   action lsp-jt--open-stack-trace))
+
+
+(defun lsp-jt--test-report ()
+  (interactive)
+  (setq buffer (get-buffer-create "**LSP - Java Test Results**"))
+  (with-current-buffer buffer
+    (lsp-jt-test-result-tab-mode)
+    (setq tabulated-list-entries nil)
+
+    (->> lsp-jt-results
+        (ht-keys)
+        (-map
+         (lambda (test-id)
+
+           (-let* (((_ _ test name)
+                   (s-match (rx (group (* any)) "@"
+                                (group (* any)) "#"
+                                (group (* any)))
+                            test-id))
+                  (class-name test)
+                  (status (if (eq (lsp-jt--get-test-status test-id) :failed) "❌" "✅"))
+                  (start-time (plist-get (ht-get lsp-jt-results test-id) :start))
+                  (start-time (propertize (format-time-string "%FT%T%z" start-time) 'face 'lsp-lens-face))
+                  (duration (plist-get (ht-get lsp-jt-results test-id) :duration))
+                  (duration (or (when duration (propertize (format "%0.2fs" duration) 'face 'lsp-lens-face)) ""))
+                  (stack-trace (plist-get (gethash test-id lsp-jt-results) :traces))
+                  (stack-trace (if stack-trace (lsp-jt--create-stack-trace-button stack-trace) "")))
+
+
+             (push (list test-id (vector start-time status duration name class-name stack-trace))
+		           tabulated-list-entries)))))
+
+    (tabulated-list-init-header)
+    (tabulated-list-print))
+  (switch-to-buffer-other-window buffer))
 
 (defun lsp-jt-test-report-refresh ()
   (lsp-treemacs-render
