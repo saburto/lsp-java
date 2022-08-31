@@ -91,7 +91,7 @@
     (window-width . ,treemacs-width)))
 
 (defun lsp-jt--process-test-lens (lens)
-  (-let [(test-data &as &jt:TestItem :location (&Location :range)) lens]
+  (-let [(test-data &as &jt:TestItem :range ) lens]
     (-doto test-data
       (lsp-put :range range))))
 
@@ -112,7 +112,7 @@
 
 (defvar-local lsp-jt--last-callback nil)
 
-(lsp-defun lsp-jt--junit-arguments ((node &as &jt:TestItem :id :uri :project-name :full-name :test-level :test-kind
+(lsp-defun lsp-jt--junit-arguments ((node &as &jt:TestItem :id :project-name :test-level :test-kind
                                           :jdt-handler))
   (lsp--send-execute-command
    "vscode.java.test.junit.argument"
@@ -248,7 +248,7 @@
                      (with-current-buffer buffer
                        (lsp-lens-refresh nil))))))))
 
-(defun lsp-jt-search (root level full-name callback)
+(defun lsp-jt-search (root callback)
   (lsp-java-with-jdtls
     (let* ((response (lsp-request "workspace/executeCommand"
                                   (list :command "vscode.java.test.findJavaProjects"
@@ -273,7 +273,7 @@
 (defun lsp-jt-goto (&rest _)
   "Goto the symbol at point."
   (interactive)
-  (-if-let ((&jt:TestItem :location (&Location :uri :range (&Range? :start))) (-some-> (treemacs-node-at-point)
+  (-if-let ((&jt:TestItem :uri :range (&Range? :start)) (-some-> (treemacs-node-at-point)
                                                                                 (button-get :data)))
       (progn
         (select-window (get-mru-window (selected-frame) nil :not-selected))
@@ -378,7 +378,7 @@
                    (delete-process tcp-server-process))
                  (funcall finished-function))))))))
 
-(lsp-defun lsp-jt--render-test-node ((test-item &as &jt:TestItem :id :label :test-level :id :jdt-handler :uri :range :children))
+(lsp-defun lsp-jt--render-test-node ((test-item &as &jt:TestItem :label :test-level :id :jdt-handler :uri :range :children))
   `(:key ,id
     :label ,label
     :icon ,(lsp-jt--get-test-icon id test-level)
@@ -424,7 +424,7 @@
               :label (f-filename root)
               :icon 'root
               :children-async (lambda (_ callback)
-                                (lsp-jt-search (lsp--path-to-uri root) 1 nil
+                                (lsp-jt-search (lsp--path-to-uri root) 
                                                (lambda (items)
                                                  (funcall callback
                                                           (-map
@@ -449,8 +449,8 @@
             nil t)
   (lsp-jt-mode 1))
 
-(lsp-defun lsp-jt--status ((&jt:TestItem :id :level))
-  (if (eq level lsp-jt-kind-method)
+(lsp-defun lsp-jt--status ((&jt:TestItem :id :test-level))
+  (if (eq test-level lsp-jt-kind-method)
       (pcase (plist-get (gethash id lsp-jt-results) :status)
         (:failed (cons "❌" 'lsp-jt-error-face))
         (:pass (cons "✔" 'lsp-jt-success-face))
@@ -597,37 +597,37 @@
 
 (defun lsp-jt--test-report ()
   (interactive)
-  (setq buffer (get-buffer-create "**LSP - Java Test Results**"))
-  (with-current-buffer buffer
-    (lsp-jt-test-result-tab-mode)
-    (setq tabulated-list-entries nil)
+  (let ((buffer (get-buffer-create "**LSP - Java Test Results**")))
+    (with-current-buffer buffer
+      (lsp-jt-test-result-tab-mode)
+      (setq tabulated-list-entries nil)
 
-    (->> lsp-jt-results
-        (ht-keys)
-        (-map
-         (lambda (test-id)
+      (->> lsp-jt-results
+           (ht-keys)
+           (-map
+            (lambda (test-id)
 
-           (-let* (((_ _ test name)
-                   (s-match (rx (group (* any)) "@"
-                                (group (* any)) "#"
-                                (group (* any)))
-                            test-id))
-                  (class-name test)
-                  (status (if (eq (lsp-jt--get-test-status test-id) :failed) "❌" "✅"))
-                  (start-time (plist-get (ht-get lsp-jt-results test-id) :start))
-                  (start-time (propertize (format-time-string "%FT%T%z" start-time) 'face 'lsp-lens-face))
-                  (duration (plist-get (ht-get lsp-jt-results test-id) :duration))
-                  (duration (or (when duration (propertize (format "%0.2fs" duration) 'face 'lsp-lens-face)) ""))
-                  (stack-trace (plist-get (gethash test-id lsp-jt-results) :traces))
-                  (stack-trace (if stack-trace (lsp-jt--create-stack-trace-button stack-trace) "")))
+              (-let* (((_ _ test name)
+                       (s-match (rx (group (* any)) "@"
+                                    (group (* any)) "#"
+                                    (group (* any)))
+                                test-id))
+                      (class-name test)
+                      (status (if (eq (lsp-jt--get-test-status test-id) :failed) "❌" "✅"))
+                      (start-time (plist-get (ht-get lsp-jt-results test-id) :start))
+                      (start-time (propertize (format-time-string "%FT%T%z" start-time) 'face 'lsp-lens-face))
+                      (duration (plist-get (ht-get lsp-jt-results test-id) :duration))
+                      (duration (or (when duration (propertize (format "%0.2fs" duration) 'face 'lsp-lens-face)) ""))
+                      (stack-trace (plist-get (gethash test-id lsp-jt-results) :traces))
+                      (stack-trace (if stack-trace (lsp-jt--create-stack-trace-button stack-trace) "")))
 
 
-             (push (list test-id (vector start-time status duration name class-name stack-trace))
-		           tabulated-list-entries)))))
+                (push (list test-id (vector start-time status duration name class-name stack-trace))
+		              tabulated-list-entries)))))
 
-    (tabulated-list-init-header)
-    (tabulated-list-print))
-  (switch-to-buffer-other-window buffer))
+      (tabulated-list-init-header)
+      (tabulated-list-print))
+    (switch-to-buffer-other-window buffer)))
 
 (defun lsp-jt-test-report-refresh ()
   (lsp-treemacs-render
